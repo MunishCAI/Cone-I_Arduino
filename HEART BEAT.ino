@@ -22,6 +22,7 @@ bool flag_hazard = true;
 bool debugging_led = false;  // Existing debug LED flag
 bool sensorsignalflag = false;
 bool connectionLost = false;
+const unsigned long connectionTimeout = 10000; // 10 seconds
 
 
 // Stable sensor values
@@ -114,7 +115,18 @@ void loop() {
     // Read data until timeout or complete message
     String temp1 = Serial.readStringUntil('\n');
     temp1.trim();
-    
+
+    // ------------ HEART BEAT CONNECTED---------------
+    if (temp1 == "L") {
+      lastLReceivedTime = millis();  // Update the time when "L" is received
+      if (connectionLost) {
+        debugPrint("Connected");
+        connectionLost = false;
+        digitalWrite(DEFECTCONE, LOW);
+        digitalWrite(CONVEYORPAUSE, LOW);
+      }
+    }
+
     if (temp1 == "1") {
       digitalWrite(DEFECTCONE, HIGH);
       digitalWrite(TOWERLAMP, HIGH);
@@ -173,6 +185,14 @@ void loop() {
   // ---------- DEBOUNCED SENSOR VALUE CHANGE ----------
   if ((millis() - LEDOnDelayTime) >= 10 && sensorsignalflag) {
     sensorsignalflag = false;
+  }
+
+  // ------------ HEART BEAT TERMINATED---------------
+  if (millis() - lastLReceivedTime > connectionTimeout && !connectionLost) {
+    Serial.println("Connection terminated");
+    connectionLost = true;
+    digitalWrite(DEFECTCONE, HIGH);
+    digitalWrite(CONVEYORPAUSE, HIGH);
   }
 
   // ---------- UPDATE PREVIOUS STATES ----------
