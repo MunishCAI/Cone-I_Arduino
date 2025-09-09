@@ -95,7 +95,7 @@ void setup() {
   pinMode(sensor3Pin, INPUT_PULLUP);
 
   digitalWrite(DEFECTCONE, LOW);
-  digitalWrite(FORWARD, HIGH);
+  digitalWrite(REVERSE, HIGH);
 
   watchdog.enable(Watchdog::TIMEOUT_1S);
 
@@ -120,11 +120,13 @@ void loop() {
 
     if (temp1 == "1") {
       digitalWrite(DEFECTCONE, HIGH);
+      digitalWrite(TOWERLAMP, HIGH);
       coneDefect = true;
       debugPrint("Defect");
     }
     else if (temp1 == "2") {
       digitalWrite(DEFECTCONE, LOW);
+      digitalWrite(TOWERLAMP, LOW);
       coneDefect = false;
       debugPrint("Clear");
     }
@@ -168,14 +170,14 @@ void loop() {
 
   // ---------- SENSOR-BASED CONTROL ----------
   if (sensor1Value == LOW && PreviousTipSensorValue == HIGH) {
-    digitalWrite(FORWARD, LOW);
-    digitalWrite(REVERSE, HIGH);
+    digitalWrite(FORWARD, HIGH);
+    digitalWrite(REVERSE, LOW);
     debugPrint("Sensor1 triggered - Stopping FORWARD");
   }
 
   if (sensor2Value == LOW && PreviousSensorValue == HIGH) {
-    digitalWrite(FORWARD, HIGH);
-    digitalWrite(REVERSE, LOW);
+    digitalWrite(FORWARD, LOW);
+    digitalWrite(REVERSE, HIGH);
     debugPrint("Sensor2 triggered - Moving FORWARD");
   }
 
