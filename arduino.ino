@@ -2,28 +2,25 @@
 
 // Watchdog object
 Watchdog watchdog;
-#define led 11
-#define uv 10
-#define defectCone 14
-#define pause 12
-#define uvled 15
 
+#define FORWARD      10
+#define REVERSE      11
+#define DEFECTCONE   12
+#define UVLED        14
+#define TOWERLAMP    15
+
+const int ledPin = LED_BUILTIN;
 bool coneDefect = false;
 bool sensorsignalflag = false;
-bool ledflag = false;
-bool flag_hazard = true;
 bool debugging_led = false;  // Existing debug LED flag
 bool debugFlag = false;      // <-- New global debug flag
 
-int sensor1Pin =27;
-int sensor2Pin = 26;
-//int PreviousSensorValue = HIGH;
-unsigned long LEDOnDelayTime = 0;
-//int PreviousTipSensorValue = LOW;
-unsigned long coneDefectTime = 0;
-unsigned long lastCallTime = 0;
-unsigned long LEDDelayTime = 0;
-short LED_Delay     = 140;
+// Sensor pins
+const int sensor1Pin = 26;
+const int sensor2Pin = 27;
+const int sensor3Pin = 25;
+
+// Stable sensor values
 int sensor1Value = HIGH;
 int sensor2Value = HIGH;
 int sensor3Value = HIGH;
@@ -32,9 +29,13 @@ int sensor3Value = HIGH;
 int PreviousSensorValue = HIGH;
 int Previous3SensorValue = LOW;
 int PreviousTipSensorValue = LOW;
-unsigned long lastLReceivedTime = 0;
-bool connectionLost = false;
-const unsigned long connectionTimeout = 10000; // 10 seconds
+
+// Timing variables
+unsigned long LEDOnDelayTime = 0;
+unsigned long coneDefectTime = 0;
+unsigned long lastCallTime = 0;
+unsigned long LEDDelayTime = 0;
+
 
 // Debounce settings
 const unsigned long debounceDelay = 0.5; // 30 ms debounce delay
@@ -75,30 +76,39 @@ void debugPrint(const String &msg) {
 }
 
 void setup() {
-  //Serial Communication
   Serial.begin(115200);
   Serial.setTimeout(10);
-
   
-  //Output Pin
-  pinMode(led,OUTPUT);
-  pinMode(uv,OUTPUT);
-  pinMode(defectCone, OUTPUT);
-  pinMode(pause, OUTPUT);
-  pinMode(uvled, OUTPUT);
-  pinMode(sensor2Pin, INPUT_PULLUP);
+
+  // Output pins
+  pinMode(UVLED, OUTPUT);
+  pinMode(ledPin, OUTPUT);
+  pinMode(FORWARD, OUTPUT);
+  pinMode(REVERSE, OUTPUT);
+  pinMode(TOWERLAMP, OUTPUT);
+  pinMode(DEFECTCONE, OUTPUT);
+
+
+  // Input pins with pull-ups
   pinMode(sensor1Pin, INPUT_PULLUP);
-  digitalWrite(led,HIGH);
-  digitalWrite(uv,HIGH);
-  digitalWrite(defectCone, LOW);
+  pinMode(sensor2Pin, INPUT_PULLUP);
+  pinMode(sensor3Pin, INPUT_PULLUP);
+
+  digitalWrite(DEFECTCONE, LOW);
+  digitalWrite(FORWARD, HIGH);
+
   watchdog.enable(Watchdog::TIMEOUT_1S);
 
   debugPrint("System Initialized");
 }
 
 void loop() {
-  int sensor2Value = digitalRead(sensor2Pin);
-  int sensor1Value = digitalRead(sensor1Pin);
+  // ---------- DEBOUNCED SENSOR READS ----------
+  sensor1Value = debounceRead(sensor1Pin, sensor1Value, lastDebounceTime1, debounceStartTime1);
+  sensor2Value = debounceRead(sensor2Pin, sensor2Value, lastDebounceTime2, debounceStartTime2);
+  sensor3Value = debounceRead(sensor3Pin, sensor3Value, lastDebounceTime3, debounceStartTime3);
+
+  // ---------- SERIAL COMMANDS ----------
   if (Serial.available()) {
     unsigned long startTime = millis();   // Start time before reading
     Serial.setTimeout(5);
@@ -106,89 +116,83 @@ void loop() {
     String temp1 = Serial.readStringUntil('\n');
     temp1.trim();
 //    Serial.println(millis());
-    unsigned long endTime = millis();  
-    //  Serial.println(temp1[0]);
+    unsigned long endTime = millis();     // Time after reading
+
     if (temp1 == "1") {
-      digitalWrite(defectCone, HIGH);
+      digitalWrite(DEFECTCONE, HIGH);
       coneDefect = true;
       debugPrint("Defect");
     }
     else if (temp1 == "2") {
-      digitalWrite(defectCone, LOW);
+      digitalWrite(DEFECTCONE, LOW);
       coneDefect = false;
       debugPrint("Clear");
     }
     else if (temp1 == "3") {
-    digitalWrite(pause, HIGH);
-    coneDefect = false;
-        debugPrint("pause");
-  }
-  else if (temp1 == "4") {
-    digitalWrite(pause, LOW);
-    coneDefect = false;
-        debugPrint("go");
-  }
-  else if (temp1 == "5") {
-    digitalWrite(uvled, HIGH);
-    coneDefect = false;
-        debugPrint("uvledon");
-  }
-  else if (temp1 == "6") {
-    digitalWrite(uvled, LOW);
-    coneDefect = false;
-        debugPrint("uvledoff");
-  }
+      digitalWrite(TOWERLAMP, HIGH);
+      debugPrint("TOWERLAMP");
+    }
+    else if (temp1 == "-3") {
+      digitalWrite(TOWERLAMP, LOW);
+      debugPrint("go");
+    }
+    else if (temp1 == "4") {
+      digitalWrite(UVLED, HIGH);
+      debugPrint("UVLEDon");
+    }
+    else if (temp1 == "-4") {
+      digitalWrite(UVLED, LOW);
+      debugPrint("UVLEDoff");
+    }
+    else if (temp1 == "5") {
+      digitalWrite(FORWARD, HIGH);
+      debugPrint("FORWARDon");
+    }
+    else if (temp1 == "-5") {
+      digitalWrite(FORWARD, LOW);
+      debugPrint("FORWARDoff");
+    }
     else if (temp1 == "D") {
       debugging_led = true;
       debugFlag = true; // Enable debug mode
+      digitalWrite(ledPin, HIGH);
       debugPrint("Debug ON");
     }
     else if (temp1 == "C") {
       debugging_led = false;
       debugFlag = false; // Disable debug mode
-      Serial.println("debugging_off");
+      digitalWrite(ledPin, LOW);
+      // No debugPrint here since we just turned it off
     }
-    else if(coneDefect == false && temp1 == "A"){
-        Serial.println("Hazard detected");
-       digitalWrite(defectCone, HIGH);
-        digitalWrite(pause, HIGH);
-        flag_hazard = false;
-      }
-      else if(coneDefect == false && temp1 == "B"){
-        Serial.println("Hazard cleared");
-        digitalWrite(defectCone, LOW);
-        digitalWrite(pause, LOW);
-        flag_hazard = true;
-      }   
   }
 
-
-  if (sensor1Value == HIGH and PreviousTipSensorValue == LOW)
-  {
-    digitalWrite(led,HIGH);
-    sensorsignalflag = true;
-    ledflag = true;
-    LEDOnDelayTime = millis();
-    LEDDelayTime = millis();
+  // ---------- SENSOR-BASED CONTROL ----------
+  if (sensor1Value == LOW && PreviousTipSensorValue == HIGH) {
+    digitalWrite(FORWARD, LOW);
+    digitalWrite(REVERSE, HIGH);
+    debugPrint("Sensor1 triggered - Stopping FORWARD");
   }
 
-  if (sensor2Value == HIGH and PreviousSensorValue == LOW )
-  {
-    Serial.println("1");
+  if (sensor2Value == LOW && PreviousSensorValue == HIGH) {
+    digitalWrite(FORWARD, HIGH);
+    digitalWrite(REVERSE, LOW);
+    debugPrint("Sensor2 triggered - Moving FORWARD");
   }
 
-  if((millis() - LEDOnDelayTime)>=10 and sensorsignalflag == true ){
-     Serial.println("0");
-     sensorsignalflag = false;
+  if (sensor3Value == LOW && Previous3SensorValue == HIGH) {
+    debugPrint("Sensor3 triggered - Sending 0");
+    Serial.println("0");
   }
 
-  if((millis() - LEDDelayTime)>=LED_Delay and ledflag == true ){
-     LEDDelayTime = 0;
-     ledflag = false;
+  if ((millis() - LEDOnDelayTime) >= 10 && sensorsignalflag) {
+    sensorsignalflag = false;
   }
-  
+
+  // ---------- UPDATE PREVIOUS STATES ----------
   PreviousSensorValue = sensor2Value;
+  Previous3SensorValue = sensor3Value;
   PreviousTipSensorValue = sensor1Value;
+
+  // Watchdog reset
   watchdog.reset();
-  
 }
