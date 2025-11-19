@@ -44,6 +44,7 @@ const unsigned long debounceDelay = 0.5; // 30 ms debounce delay
 unsigned long lastDebounceTime1 = 0;
 unsigned long lastDebounceTime2 = 0;
 unsigned long lastDebounceTime3 = 0;
+unsigned long lastLReceivedTime = 0;
 
 // For measuring debounce duration
 unsigned long debounceStartTime1 = 0;
