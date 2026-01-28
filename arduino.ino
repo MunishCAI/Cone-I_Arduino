@@ -1,203 +1,174 @@
-#include <Watchdog.h>
+#include "esp_task_wdt.h"
 
-// Watchdog object
-Watchdog watchdog;
-
-#define UVLED 10
-#define TIPWHITELED 11
-#define CONVEYORPAUSE 12
-#define DEFECTCONE 14
-#define UVWHITELED 15
+// ---------------- SAFE PIN DEFINITIONS ----------------
+#define UVLED            18
+#define TIPWHITELED      19
+#define CONVEYORPAUSE    23
+#define DEFECTCONE       15
+#define UVWHITELED       22
+#define LED_BUILTIN      2
 
 // Sensor pins
-const int sensor1Pin = 26;
-const int sensor2Pin = 27;
+const int sensor1Pin = 35;
+const int sensor2Pin = 36;
 const int sensor3Pin = 25;
-const int ledPin = LED_BUILTIN;
 
-// flag 
-bool debugFlag = false;      // <-- New global debug flag
+// ---------------- FLAGS ----------------
+bool debugFlag = false;
 bool coneDefect = false;
 bool flag_hazard = true;
-bool debugging_led = false;  // Existing debug LED flag
-bool sensorsignalflag = false;
 bool connectionLost = false;
-const unsigned long connectionTimeout = 10000; // 10 seconds
 
+const unsigned long connectionTimeout = 10000;
 
-// Stable sensor values
+// ---------------- SENSOR STATES ----------------
 int sensor1Value = HIGH;
 int sensor2Value = HIGH;
 int sensor3Value = HIGH;
+int prevSensor2 = HIGH;
 
-// For detecting changes
-int PreviousSensorValue = HIGH;
-int Previous3SensorValue = LOW;
-int PreviousTipSensorValue = LOW;
+// ---------------- DEBOUNCE ----------------
+const unsigned long debounceDelay = 30;
+unsigned long lastDebounce1 = 0;
+unsigned long lastDebounce2 = 0;
+unsigned long lastDebounce3 = 0;
+unsigned long lastHeartbeat = 0;
 
-// Timing variables
-unsigned long LEDOnDelayTime = 0;
-
-
-// Debounce settings
-const unsigned long debounceDelay = 0.5; // 30 ms debounce delay
-unsigned long lastDebounceTime1 = 0;
-unsigned long lastDebounceTime2 = 0;
-unsigned long lastDebounceTime3 = 0;
-unsigned long lastLReceivedTime = 0;
-
-// For measuring debounce duration
-unsigned long debounceStartTime1 = 0;
-unsigned long debounceStartTime2 = 0;
-unsigned long debounceStartTime3 = 0;
-
-int debounceRead(int pin, int &lastStableValue, unsigned long &lastDebounceTime, unsigned long &debounceStartTime) {
-    int reading = digitalRead(pin);
-
-    // If pin reading has changed, start timing
-    if (reading != lastStableValue) {
-        lastDebounceTime = millis();
-        debounceStartTime = millis();   // Record when instability started
-    }
-
-    // If debounce time has passed, confirm stable state
-    if ((millis() - lastDebounceTime) > debounceDelay) {
-        if (lastStableValue != reading) {
-            // Only log when the stable value actually changes
-            unsigned long debounceDuration = millis() - debounceStartTime;
-        }
-        lastStableValue = reading;
-    }
-    return lastStableValue;
+// ---------------- FAST DEBUG PRINT ----------------
+inline void debugPrint(const char *msg) {
+  if (debugFlag) Serial.println(msg);
 }
 
-// ---------- FUNCTION TO PRINT DEBUG MESSAGES ----------
-void debugPrint(const String &msg) {
-  if (debugFlag) {
-    Serial.println(msg);
+// ---------------- DEBOUNCE FUNCTION ----------------
+int debounceRead(int pin, int lastValue, unsigned long &lastTime) {
+  int reading = digitalRead(pin);
+  if (reading != lastValue && millis() - lastTime > debounceDelay) {
+    lastTime = millis();
+    return reading;
   }
+  return lastValue;
 }
 
+// ---------------- SETUP ----------------
 void setup() {
-  //Serial Communication
   Serial.begin(115200);
-  Serial.setTimeout(10);
-  
+  delay(2000);   // <<< IMPORTANT: wait for Serial Monitor
 
-  // Output pins  
   pinMode(UVLED, OUTPUT);
-  pinMode(ledPin, OUTPUT);
-  pinMode(UVWHITELED, OUTPUT);
-  pinMode(DEFECTCONE, OUTPUT); 
-  pinMode(TIPWHITELED, OUTPUT); 
+  pinMode(TIPWHITELED, OUTPUT);
   pinMode(CONVEYORPAUSE, OUTPUT);
+  pinMode(DEFECTCONE, OUTPUT);
+  pinMode(UVWHITELED, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
 
-
-  // Input pins with pull-ups
   pinMode(sensor1Pin, INPUT_PULLUP);
   pinMode(sensor2Pin, INPUT_PULLUP);
   pinMode(sensor3Pin, INPUT_PULLUP);
 
+  // Fail-safe outputs
+  digitalWrite(DEFECTCONE, LOW);
+  digitalWrite(CONVEYORPAUSE, LOW);
 
-  watchdog.enable(Watchdog::TIMEOUT_1S);
+  // Watchdog (safe)
+  esp_task_wdt_init(2, true);
+  esp_task_wdt_add(NULL);
 
-  debugPrint("System Initialized");
+  Serial.println("SYSTEM READY");
 }
 
+// ---------------- LOOP ----------------
 void loop() {
-  // ---------- DEBOUNCED SENSOR READS ----------
-  sensor1Value = debounceRead(sensor1Pin, sensor1Value, lastDebounceTime1, debounceStartTime1);
-  sensor2Value = debounceRead(sensor2Pin, sensor2Value, lastDebounceTime2, debounceStartTime2);
-  sensor3Value = debounceRead(sensor3Pin, sensor3Value, lastDebounceTime3, debounceStartTime3);
+  esp_task_wdt_reset();
 
-  // ---------- SERIAL COMMANDS ----------
+  // -------- SENSOR READ --------
+  sensor1Value = debounceRead(sensor1Pin, sensor1Value, lastDebounce1);
+  sensor2Value = debounceRead(sensor2Pin, sensor2Value, lastDebounce2);
+  sensor3Value = debounceRead(sensor3Pin, sensor3Value, lastDebounce3);
+
+  // -------- SENSOR EVENT --------
+  if (sensor2Value == LOW && prevSensor2 == HIGH) {
+    Serial.println("1");
+    debugPrint("Sensor2 Triggered");
+  }
+  prevSensor2 = sensor2Value;
+
+  // -------- SERIAL COMMAND --------
   if (Serial.available()) {
-    unsigned long startTime = millis();   // Start time before reading
-    Serial.setTimeout(5);
-    // Read data until timeout or complete message
-    String temp1 = Serial.readStringUntil('\n');
-    temp1.trim();
+    char cmd = Serial.read();
 
-    // ------------ HEART BEAT CONNECTED---------------
-    if (temp1 == "L") {
-      lastLReceivedTime = millis();  // Update the time when "L" is received
-      if (connectionLost) {
-        debugPrint("Connected");
-        connectionLost = false;
+    // Ignore newline / carriage return
+    if (cmd == '\n' || cmd == '\r') return;
+
+    switch (cmd) {
+//      case 'L':
+//        lastHeartbeat = millis();
+//        if (connectionLost) {
+//          connectionLost = false;
+//          digitalWrite(DEFECTCONE, LOW);
+//          digitalWrite(CONVEYORPAUSE, LOW);
+//          debugPrint("Connection Restored");
+//        }
+//        break;
+
+      case '1':
+        coneDefect = true;
+        digitalWrite(DEFECTCONE, HIGH);
+        debugPrint("Defect ON");
+        break;
+
+      case '2':
+        coneDefect = false;
         digitalWrite(DEFECTCONE, LOW);
-        digitalWrite(CONVEYORPAUSE, LOW);
-      }
-    }
+        debugPrint("Defect OFF");
+        break;
 
-    if (temp1 == "1") {
-      digitalWrite(DEFECTCONE, HIGH);
-      coneDefect = true;
-      debugPrint("Defect");
-    }
-    else if (temp1 == "2") {
-      digitalWrite(DEFECTCONE, LOW);
-      coneDefect = false;
-      debugPrint("Clear");
-    }
-    else if (temp1 == "D") {
-      debugging_led = true;
-      debugFlag = true; // Enable debug mode
-      // digitalWrite(ledPin, HIGH);
-      debugPrint("Debug ON");
-    }
-    else if (temp1 == "C") {
-      debugging_led = false;
-      debugFlag = false; // Disable debug mode
-      // digitalWrite(ledPin, LOW);
-      debugPrint("Debug OFF");
-      // No debugPrint here since we just turned it off
-    }else if (temp1 == "3") {
-      digitalWrite(CONVEYORPAUSE, HIGH);
-      debugPrint("CONVEYORPAUSE ON");
-    }
-    else if (temp1 == "-3") {
-      digitalWrite(CONVEYORPAUSE, LOW);
-      debugPrint("CONVEYORPAUSE OFF");
-      // No debugPrint here since we just turned it off
-    }
-    else if(coneDefect == false && temp1 == "A"){
-        debugPrint("Hazard detected");
-       digitalWrite(DEFECTCONE, HIGH);
+      case 'D':
+        debugFlag = true;
+        Serial.println("DEBUG ENABLED");
+        break;
+
+      case 'C':
+        debugFlag = false;
+        Serial.println("DEBUG DISABLED");
+        break;
+
+      case '3':
+        digitalWrite(LED_BUILTIN, HIGH);
         digitalWrite(CONVEYORPAUSE, HIGH);
-        flag_hazard = false;
-      }
-      else if(coneDefect == false && temp1 == "B"){
-        debugPrint("Hazard cleared");
-        digitalWrite(DEFECTCONE, LOW);
+        debugPrint("Conveyor Paused");
+        break;
+
+      case '4':
+        digitalWrite(LED_BUILTIN, LOW);
         digitalWrite(CONVEYORPAUSE, LOW);
-        flag_hazard = true;
-      }   
+        debugPrint("Conveyor Running");
+        break;
+
+      case 'A':
+        if (!coneDefect) {
+          digitalWrite(DEFECTCONE, HIGH);
+          digitalWrite(CONVEYORPAUSE, HIGH);
+          flag_hazard = false;
+          debugPrint("Hazard Detected");
+        }
+        break;
+
+      case 'B':
+        if (!coneDefect) {
+          digitalWrite(DEFECTCONE, LOW);
+          digitalWrite(CONVEYORPAUSE, LOW);
+          flag_hazard = true;
+          debugPrint("Hazard Cleared");
+        }
+        break;
+    }
   }
 
-  // ---------- SENSOR-BASED CONTROL ----------
-  if (sensor2Value == LOW && PreviousSensorValue == HIGH) {
-    debugPrint("Sensor2 triggered - Sending 0");
-    Serial.println("0");
-  }
-
-  // ---------- DEBOUNCED SENSOR VALUE CHANGE ----------
-  if ((millis() - LEDOnDelayTime) >= 10 && sensorsignalflag) {
-    sensorsignalflag = false;
-  }
-
-  // ------------ HEART BEAT TERMINATED---------------
-  if (millis() - lastLReceivedTime > connectionTimeout && !connectionLost) {
-    Serial.println("Connection terminated");
-    connectionLost = true;
-    digitalWrite(DEFECTCONE, HIGH);
-    digitalWrite(CONVEYORPAUSE, HIGH);
-  }
-
-  // ---------- UPDATE PREVIOUS STATES ----------
-  PreviousSensorValue = sensor2Value;
-  Previous3SensorValue = sensor3Value;
-  PreviousTipSensorValue = sensor1Value;
-
-  // Watchdog reset
-  watchdog.reset();
+//  // -------- CONNECTION TIMEOUT --------
+//  if (millis() - lastHeartbeat > connectionTimeout && !connectionLost) {
+//    connectionLost = true;
+//    digitalWrite(DEFECTCONE, HIGH);
+//    digitalWrite(CONVEYORPAUSE, HIGH);
+//    debugPrint("Connection Lost");
+//  }
 }
