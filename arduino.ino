@@ -97,6 +97,8 @@ void setup() {
   pinMode(sensor1Pin, INPUT_PULLUP);
   pinMode(sensor2Pin, INPUT_PULLUP);
   pinMode(sensor3Pin, INPUT_PULLUP);
+  digitalWrite(TIPWHITELED, HIGH);
+  digitalWrite(UVLED, HIGH);
 
 
   watchdog.enable(Watchdog::TIMEOUT_1S);
@@ -119,15 +121,15 @@ void loop() {
     temp1.trim();
 
     // ------------ HEART BEAT CONNECTED---------------
-    if (temp1 == "L") {
-      lastLReceivedTime = millis();  // Update the time when "L" is received
-      if (connectionLost) {
-        debugPrint("Connected");
-        connectionLost = false;
-        digitalWrite(DEFECTCONE, LOW);
-        digitalWrite(CONVEYORPAUSE, LOW);
-      }
-    }
+    // if (temp1 == "L") {
+    //   lastLReceivedTime = millis();  // Update the time when "L" is received
+    //   if (connectionLost) {
+    //     debugPrint("Connected");
+    //     connectionLost = false;
+    //     digitalWrite(DEFECTCONE, LOW);
+    //     digitalWrite(CONVEYORPAUSE, LOW);
+    //   }
+    // }
 
     if (temp1 == "1") {
       digitalWrite(DEFECTCONE, HIGH);
@@ -186,12 +188,12 @@ void loop() {
   }
 
   // ------------ HEART BEAT TERMINATED---------------
-  if (millis() - lastLReceivedTime > connectionTimeout && !connectionLost) {
-    Serial.println("Connection terminated");
-    connectionLost = true;
-    digitalWrite(DEFECTCONE, HIGH);
-    digitalWrite(CONVEYORPAUSE, HIGH);
-  }
+  // if (millis() - lastLReceivedTime > connectionTimeout && !connectionLost) {
+  //   Serial.println("Connection terminated");
+  //   connectionLost = true;
+  //   digitalWrite(DEFECTCONE, HIGH);
+  //   digitalWrite(CONVEYORPAUSE, HIGH);
+  // }
 
   // ---------- UPDATE PREVIOUS STATES ----------
   PreviousSensorValue = sensor2Value;
